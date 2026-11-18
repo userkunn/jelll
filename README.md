@@ -1,127 +1,177 @@
-# JELLL V5 — Linux 版リライト
+# JELLL
 
-> **V5.3（第3次最終検証監査・全項目合格）**: R-05 — generation は加算のみでリセット/巻き戻しを
-> 完全廃止(上限到達スロットは永久退役、後継は virgin スロットのみ、枯渇時は alloc=0)。
-> R-02 — `free` は mutex 下の LIVE→DRAINING 一回きりの状態遷移で解放権を排他取得(2番目以降は
-> 即 return)、破棄直前に index+generation を再照合。R-06 — `/proc` による fd 実体検証が不能な
-> 場合はフォールバックせず fail-closed で拒絶。
+**One `.jelll` file in, a live WebAssembly web app out.** C/C++ (or Rust, or Zig)
+plus JS/TS/TSX in a single source file, built with one command. A Linux-native
+build tool with a hardened pipeline: explicit exports, a handle-based runtime
+(malformed pointers cannot crash or corrupt), and a live-reload dev server.
+
+**1 つの `.jelll` ファイルから、動く WebAssembly 製 Web アプリを生成します。**
+C/C++(または Rust、Zig)と JS/TS/TSX を単一ファイルにまとめ、コマンド一発でビルド。
+Linux 向けネイティブ実装で、明示エクスポート・ハンドルベースのランタイム
+(不正ポインタでもクラッシュや破壊が起きない)・ライブリロード付き開発サーバを備えます。
+
+> **Security hardening history / セキュリティ強化の経緯**
 >
-> **V5.2（第2次レッドチーム監査 R-01〜R-10 対応）**: IDL のポインタは「定義済み struct の
-> 単一ポインタ (Foo*)」のみ許可（int*/void*/多重ポインタは構文エラー）。ポインタ戻り値は
-> ハンドルに変換されて返る。ハンドルは 20bit 世代 × 12bit スロット（4096 スロット・世代
-> 枯渇スロットは安全に退役、リークなし）。`--threads` のメソッド実行中はピン留めで
-> 並行 free から保護。`call` の TOCTOU を fd 検証で封鎖、ブロック走査は線形時間。
-> dev サーバは分割リクエストを正しく再構成。llvm-nm 失敗はビルド失敗。セットアップは
-> 全成果物の digest/commit をバイナリ固定値で検証。
->
-> **V5.1（レッドチーム監査対応）**: 監査 C-01〜C-08 / M-01〜M-06 / S-01〜S-08 / L-01〜L-06 を
-> 修正済み。主な挙動変化 — (1) JS へのポインタ露出を廃止しハンドル API（`T_alloc_h` /
-> `T_free_h` / `T_get_f_h` / `T_set_f_h` / `S_m_h` + `T_live_count` / `T_slot_count`）に移行。
-> 生ポインタ API（`T_alloc` 等）は lang.c 内部専用。(2) `--export-all` 廃止 → コンパイル済み
-> オブジェクトから llvm-nm で列挙した C リンケージ関数 + ハンドル API のみ
-> `-sEXPORTED_FUNCTIONS` で明示公開。(3) `call` は include-once（同じファイルは1回だけ展開、
-> 再帰深度 64・総展開数上限付き）でプロジェクトルート外への参照を拒否。(4) lang.sync は
-> `struct X { ... };` の末尾 `;` を許可。(5) dev サーバは Host ヘッダを検証（非ループバックは
-> 421）。(6) `--threads` は lang.c + lang.sync のみ（Rust/Zig は共有メモリー非対応）。
-
-C/C++・Rust・Zig と JS/TS/TSX を1つの `.jelll` ファイルにまとめ、
-コマンド一発で WebAssembly 製 Web アプリを生成するビルドツール（Linux 実装）。
-
-元 Windows 実装 (`jelll.cpp`, 1,351行) の欠陥を除去し、POSIX/Linux 用に
-ゼロ警告・堅牢なエラー処理で書き直したものです。
+> - **V6 — final verification audit: all green / 第3次最終検証監査・全項目合格**:
+>   generation counters are append-only (a saturated slot retires forever and its
+>   cell continues on a virgin slot; no ABA revival) / generation は加算のみで
+>   リセット禁止(上限到達スロットは永久退役、後継は virgin スロットのみで ABA 復活なし)。
+>   `free` takes exclusive destroy ownership via a one-shot LIVE→DRAINING
+>   transition under the mutex and re-checks index+generation before the
+>   destructor / `free` は mutex 下の一回きり LIVE→DRAINING 遷移で解放権を排他取得し、
+>   破棄直前に index+generation を再照合。`/proc` verification failure is
+>   fail-closed (no path fallback) / fd 実体検証不能時は fail-closed で拒絶。
+> - **V5.2 — regression audit R-01…R-10 / 第2次監査対応**: IDL pointers are
+>   exactly one level to a declared struct (`Foo*`); `int*` / `void*` / `Foo**`
+>   are syntax errors / IDL のポインタは struct 単一ポインタのみ(int*/void*/多重は構文エラー)。
+>   Pointer returns map through `__jelll_handle_of_*` / ポインタ戻り値はハンドル変換。
+>   Handles are 20-bit generation × 12-bit slot / ハンドルは 20bit 世代 × 12bit スロット。
+>   Method bodies run pin-protected against concurrent frees / メソッド実行中はピンで
+>   並行 free から保護。`call` TOCTOU closed via fd verification, block scanning
+>   is linear-time / `call` の TOCTOU を fd 検証で封鎖・ブロック走査は線形時間。
+>   Split HTTP requests reassemble correctly / 分割 HTTP リクエストを正しく再構成。
+>   llvm-nm failure fails the build; setup verifies pinned digests/commits /
+>   llvm-nm 失敗はビルド失敗、セットアップは固定 digest/commit を検証。
+> - **V5.1 — first red-team audit / 初回レッドチーム監査対応**: no raw pointers
+>   cross into JS — the exported surface is the handle API (`T_alloc_h`,
+>   `T_free_h`, `T_get_f_h`, `T_set_f_h`, `S_m_h`, `T_live_count`,
+>   `T_slot_count`); raw `T_alloc` / `T_free` / … stay inside `lang.c` /
+>   JS への生ポインタ露出を廃止しハンドル API のみ公開(生 API は lang.c 内部専用)。
+>   `--export-all` replaced by explicit `-sEXPORTED_FUNCTIONS` / 明示エクスポートに移行。
+>   `call` is include-once with depth/size caps and project-root confinement /
+>   `call` は include-once・深さ/サイズ上限付き・プロジェクトルート内に限定。
+>   dev server validates the `Host` header (421 otherwise) / dev サーバは Host 検証(違反 421)。
 
 ---
 
-## 必要環境
+## Prerequisites / 必要環境
 
-| ツール | 用途 | 備考 |
+| Tool / ツール | Purpose / 用途 | Notes / 備考 |
 |---------------------|----------------------------|------------------------------------|
-| GCC/G++ (C++17) | jelll 本体のビルド | `make` |
-| Node.js + npm | esbuild / Zig インデックス解決 | https://nodejs.org/ |
-| Emscripten (emcc) | C/C++ → WASM | `jelll --setup` で自動導入 |
-| esbuild | JS/TS バンドル | `jelll --setup` で自動導入 |
-| Rust (rustc + wasm32) | Rust → WASM（任意） | `jelll --setup` |
-| Zig | Zig → WASM（任意） | `jelll --setup` |
+| GCC/G++ (C++17) | Build jelll itself / jelll 本体のビルド | `make` |
+| Node.js + npm | esbuild install, Zig index / esbuild 導入・Zig 索引 | https://nodejs.org/ |
+| Emscripten (emcc) | C/C++ → WASM | auto via `jelll --setup` / 自動導入可 |
+| esbuild | JS/TS bundling / JS/TS バンドル | auto via `jelll --setup` / 自動導入可 |
+| Rust (rustc + wasm32) | Rust → WASM (optional / 任意) | auto via `jelll --setup` |
+| Zig | Zig → WASM (optional / 任意) | auto via `jelll --setup` |
 
-## ビルドとインストール
+## Build & install / ビルドとインストール
 
 ```sh
-make            # ./jelll が生成される（-Wall -Wextra -Wpedantic -Werror・警告ゼロ）
-sudo make install   # /usr/local/bin/jelll へ
+make            # produces ./jelll (-Wall -Wextra -Wpedantic -Werror, zero warnings)
+                # ./jelll を生成(警告ゼロ)
+sudo make install   # → /usr/local/bin/jelll
 ```
 
-## ツールチェーンセットアップ
+## Toolchain setup / ツールチェーンセットアップ
 
 ```sh
-jelll --setup    # または jelll setup
+jelll --setup    # or / または jelll setup
 ```
 
-矢印キーで移動、スペースで選択/解除、Enter で確定するマルチセレクト UI。
-選択したコンパイラが自動でダウンロード・インストール・PATH 登録されます
-（インストール先: `~/.local/share/jelll/tools`、`JELLL_TOOLCHAIN_DIR` で変更可）。
-`JELLL_SETUP_DRY_RUN=1` でコマンド表示のみ（テスト用）。
+A multi-select TUI: arrows to move, space to toggle, Enter to confirm. Selected
+toolchains are downloaded, installed and registered on `PATH` (install root:
+`~/.local/share/jelll/tools`, override with `JELLL_TOOLCHAIN_DIR`). Set
+`JELLL_SETUP_DRY_RUN=1` to print commands without executing (for tests).
+Every download is verified against digests/commits pinned in the binary.
 
-ツール探索は環境変数なしでも動きます: `JELLL_TOOLCHAIN_DIR` →
-`~/.local/share/jelll/tools`（`--setup` の既定）→ `~/.cache/jelll-tools`
-（`tests/install_toolchains.sh` の既定）の順で、**存在するディレクトリ**を
-自動採用します。テストハーネス以外に環境変数の export は不要です。
+矢印キーで移動、スペースで選択/解除、Enter で確定するマルチセレクト UI です。
+選択したコンパイラを自動でダウンロード・インストール・PATH 登録します(インストール先:
+`~/.local/share/jelll/tools`、`JELLL_TOOLCHAIN_DIR` で変更可)。
+`JELLL_SETUP_DRY_RUN=1` でコマンド表示のみ(テスト用)。ダウンロード物はすべて、
+バイナリに埋め込んだ digest/commit と照合されます。
 
-## 使い方
+Tool discovery works without any environment variables: `JELLL_TOOLCHAIN_DIR` →
+`~/.local/share/jelll/tools` (the `--setup` default) → `~/.cache/jelll-tools`
+(the test-suite default). The first **existing** directory wins.
+
+ツール探索は環境変数なしでも動きます(`JELLL_TOOLCHAIN_DIR` → `~/.local/share/jelll/tools`
+→ `~/.cache/jelll-tools` の順に、存在するディレクトリを自動採用)。テストハーネス以外に
+export は不要です。
+
+## Usage / 使い方
 
 ```sh
-jelll app.jelll            # ビルド → dist/ に出力
-jelll dev app.jelll        # 開発サーバー http://127.0.0.1:8000（保存で自動リビルド・ライブリロード）
-jelll --watch app.jelll    # jelll dev のエイリアス
-jelll --threads app.jelll  # 共有メモリー+スレッド版（std::thread 等。配信に COOP/COEP 要）
+jelll app.jelll            # build → dist/        # ビルド → dist/ に出力
+jelll dev app.jelll        # dev server http://127.0.0.1:8000 (rebuild + live reload on save)
+                           # 開発サーバ(保存で自動リビルド・ライブリロード)
+jelll --watch app.jelll    # alias of / エイリアス jelll dev
+jelll --threads app.jelll  # shared memory + threads (needs COOP/COEP to serve)
+                           # 共有メモリー+スレッド版(配信に COOP/COEP 要)
 jelll --version / --help
 ```
 
-対応拡張子: `.jelll`（推奨）/ `.jsbc` / `.tsbc` / `.tsxbc`（レガシー、同一処理のエイリアス）。
+Accepted extensions / 対応拡張子: `.jelll` (recommended / 推奨), `.jsbc`, `.tsbc`,
+`.tsxbc` (legacy aliases with identical behavior / 同一処理のレガシー・エイリアス)。
+`--threads` builds accept `lang.c` + `lang.sync` only (Rust/Zig objects cannot
+carry the shared-memory feature set) / `--threads` は lang.c + lang.sync のみ対象
+(Rust/Zig は共有メモリーの feature 整合性を満たせないため)。
 
-## 入力ファイル形式
+## Input format / 入力ファイル形式
 
-`lang.X { ... }` ブロックを記述します（詳細は同梱の JELLL V5 技術マニュアル参照）。
-同じ言語の複数ブロックは出現順に連結、JS/TS/TSX のコンパイルモードは
-TSX > TS > JS で自動判定。コメント・文字列リテラル内のブロックや `call` は無視。
-`call "relative/path"` は再帰展開し、循環参照は検出します。
-ネイティブブロック（c/rs/zig）とスクリプトブロック（js/ts/tsx）が各1つ以上必要です。
-構造体/メソッド宣言は `lang.sync`（IDL）ブロックに記述します（`lang.c` には本体のみ）。
-`lang.sync` はネイティブ 1 つ以上ルールの対象外ですが、`lang.sync` だけではビルドできません。
+Code lives in `lang.X { ... }` blocks (see the bundled technical manual for the
+full reference). Blocks of the same language concatenate in source order; the
+JS/TS/TSX compile mode is auto-detected (TSX > TS > JS). Blocks and `call`
+directives inside comments or string literals are ignored. `call "relative/path"`
+expands recursively (include-once: each file expands once, so DAGs stay linear),
+cycles are detected, and targets outside the project root are rejected. At least
+one native block (`lang.c` / `lang.rs` / `lang.zig`) and one script block
+(`lang.js` / `lang.ts` / `lang.tsx`) are required. Struct/method declarations go
+in a `lang.sync` (IDL) block; `lang.c` carries method bodies only.
 
-## 出力構成
+コードは `lang.X { ... }` ブロックに記述します(詳細は同梱の技術マニュアル参照)。
+同じ言語のブロックは出現順に連結、JS/TS/TSX のコンパイルモードは TSX > TS > JS で
+自動判定。コメント・文字列リテラル内のブロックや `call` は無視されます。
+`call "relative/path"` は再帰展開します(include-once: 同一ファイルは1回のみ展開され、
+DAG でも線形)。循環参照は検出し、プロジェクトルート外のターゲットは拒否します。
+ネイティブブロック(c/rs/zig)とスクリプトブロック(js/ts/tsx)が各1つ以上必要です。
+構造体/メソッド宣言は `lang.sync`(IDL)ブロック、本体は `lang.c` に記述します。
+
+## Output layout / 出力構成
 
 ```
 project/
 ├── app.jelll
-├── .bc_build/               # 中間ファイル
+├── .bc_build/               # intermediates / 中間ファイル
 │   ├── core.cpp / core.rs / core.zig / core_rs.o / libcore_rs.a ...
-│   ├── entry.js|.ts|.tsx    # グルーコード + sync クラス + スクリプト（出現順）
+│   ├── entry.js|.ts|.tsx    # glue + sync classes + scripts (source order)
+│   │                        # グルーコード + sync クラス + スクリプト(出現順)
 │   ├── emcc.stderr.log / rustc.stderr.log / zig.stderr.log / esbuild.stderr.log
-└── dist/                    # このディレクトリを配信
-    ├── native.wasm          # ネイティブコード → WASM（16MiB 共有メモリー固定）
-    ├── native.mjs           # Emscripten ES モジュールグルー（★仕様書の3ファイルに無い追加分）
-    ├── bundle.js            # バンドル済み JS/TS (ESM)
-    └── index.html           # CSS/HTML 注入済み
+└── dist/                    # serve this directory / このディレクトリを配信
+    ├── native.wasm          # native code → WASM (growable heap: 32MB → 2GB)
+    │                        # ネイティブコード → WASM(自動成長ヒープ 32MB→2GB)
+    ├── native.mjs           # Emscripten ES-module glue / Emscripten ES モジュール
+    ├── bundle.js            # bundled JS/TS (ESM) / バンドル済み JS/TS
+    └── index.html           # with CSS/HTML injected / CSS/HTML 注入済み
 ```
 
-## WASM ランタイム API
+## WASM runtime API / WASM ランタイム API
 
-| グローバル | 型 | 説明 |
+| Global / グローバル | Type / 型 | Description / 説明 |
 |----------------|--------------------|---------------------------------------|
-| `native` | Object | エクスポートされた関数がプロパティとして利用可能（`native.add(2,2)`）。ポインタを取る/返す生 API は非公開で、ハンドル版（`T_alloc_h` 等）のみ |
-| `sharedBuffer` | ArrayBufferLike | ヒープ全体のビュー（`new Uint8Array(sharedBuffer)`） |
-| `sharedMemory` | WebAssembly.Memory | ヒープ本体（自動成長: 初期32MB → 最大2GB） |
+| `native` | Object | Exported functions as properties (`native.add(2,2)`). Raw pointer APIs are never exported — only the handle API (`T_alloc_h`, …) / エクスポート済み関数が利用可能。生ポインタ API は非公開でハンドル版のみ |
+| `sharedBuffer` | ArrayBufferLike | View over the whole heap (`new Uint8Array(sharedBuffer)`) / ヒープ全体のビュー |
+| `sharedMemory` | WebAssembly.Memory | The heap itself (auto-growing: 32MB initial → 2GB max) / ヒープ本体(自動成長) |
 
-**メモリー上限はありません**（旧仕様の固定16MiBは撤去）。ヒープは必要に応じて自動成長します。
-成長後は `sharedBuffer` が差し替わるため、グローバル経由（getter）で参照し直してください。
-`sharedBuffer` は常に `sharedMemory.buffer` の同一オブジェクトです — JS 側の書き込みが
-そのままネイティブから見えます。なお `sharedBuffer` という名前は互換のため残していますが、
-通常ビルドでは一般の `ArrayBuffer` です（`--threads` 時のみ `SharedArrayBuffer`）。
+**There is no fixed memory cap** / **メモリー上限はありません**。The heap grows on
+demand. After growth `sharedBuffer` is swapped, so re-read it through the global
+(getter). `sharedBuffer` is always the very same object as
+`sharedMemory.buffer`: JS writes are visible to native code directly. The name
+is kept for compatibility; in regular builds it is a plain `ArrayBuffer`
+(a `SharedArrayBuffer` only with `--threads`).
 
-## lang.sync（IDL ブロック・V5）
+ヒープは必要に応じて自動成長します。成長後は `sharedBuffer` が差し替わるため、
+グローバル経由(getter)で参照し直してください。`sharedBuffer` は常に
+`sharedMemory.buffer` と同一オブジェクトで、JS 側の書き込みがそのままネイティブから
+見えます。名前は互換のため残していますが、通常ビルドでは一般の `ArrayBuffer` です
+(`--threads` 時のみ `SharedArrayBuffer`)。
 
-構造体とメソッドの宣言は **`lang.sync` ブロック（IDL）** に書き、C++ からは切り離します。
-C++ 側の構造体スクレイピング（`// @jelll-sync`）は **V5 で廃止** されました。
+## lang.sync (IDL block / IDL ブロック)
+
+Struct and method declarations live in a **`lang.sync` block (IDL)**, separate
+from the C++ bodies. Scraping struct declarations out of C++ is not supported.
+
+構造体とメソッドの宣言は **`lang.sync` ブロック(IDL)** に書き、C++ 本体とは切り離します。
 
 ```
 lang.sync {
@@ -140,177 +190,226 @@ float Circle_scale(Circle* self, float s) { self->radius *= s; return self->radi
 }
 ```
 
-**構文**: `struct <名前> { <型> <フィールド名>; ... <メソッド名>(<型> <引数名>, ...) -> <戻り値型>; ... }`
-宣言は `;` 区切り 1 行 1 宣言。構造体内のコメントは無視されます。
+**Syntax / 構文**: `struct <Name> { <Type> <field>; ... <method>(<Type> <arg>, ...) -> <Ret>; ... }`
+One declaration per `;`. Comments inside the struct body are ignored. A trailing
+`;` after the closing `}` is allowed (`struct X { ... };`).
 
-**型テーブル（IDL で使えるのは以下のみ）**
+宣言は `;` 区切り 1 行 1 宣言。構造体内のコメントは無視されます。`}` の後の `;` は
+付けても付けなくても構いません(`struct X { ... };` が使えます)。
 
-| IDL | C++ 生成型 | TS | 備考 |
+**Type table — the only types the IDL accepts / 型テーブル(IDL で使えるのは以下のみ)**
+
+| IDL | Generated C++ / C++ 生成型 | TS | Notes / 備考 |
 |---|---|---|---|
 | `int` / `int32` | `int` | number | |
 | `uint` / `uint32` | `unsigned int` | number | |
-| `int64` | `long long` | bigint | getter/setter は符号付き64ビット |
+| `int64` | `long long` | bigint | signed 64-bit accessors / 符号付き64ビット |
 | `uint64` | `unsigned long long` | bigint | |
 | `float` | `float` | number | |
 | `double` | `double` | number | |
-| `bool` | `bool` | boolean | 境界は `unsigned char` |
-| `<型>*` | `<型>*` | number (ハンドル) | getter は「ハンドル」を返し、setter はハンドルを受け取る（ポインタ素値は JS に露出しない）。基底型はテーブル型・`void`・`lang.sync` の構造体名 |
-| `void` | `void` | void | 戻り値専用 |
+| `bool` | `bool` | boolean | boundary is `unsigned char` / 境界は `unsigned char` |
+| `<Struct>*` | `<Struct>*` | number (handle / ハンドル) | getters return a handle, setters accept one — raw pointer values never reach JS. The base must be a declared `lang.sync` struct: `int*`, `void*`, `Foo**` are rejected / getter はハンドルを返し setter はハンドルを受け取る(ポインタ素値は JS に露出しない)。基底は lang.sync の struct のみ(int*/void*/多重ポインタは拒否) |
+| `void` | `void` | void | return only / 戻り値専用 |
 
-- `long long` 等の**多語型名や `const` 修飾子は IDL では使いません**（`int64` 等のテーブル綴りを使用）。
-  テーブル外の型は即 `Unsupported type` エラーです（`string` 等も同様）。
-- **メソッド本体は lang.c に自由に書けます**。生成される `extern "C"` プロトタイプが
-  C リンケージを自動的に与えるので、本体側に `extern "C"` は**あってもなくても**動きます。
-  マクロ・`inline`・`__attribute__`・コメントの書式は lang.c 内では完全自由です
-  （IDL はユーザーコードとは独立に解析されるため、`#define` やコメントの影響を受けません）。
-- **構造体の定義（`struct Circle { ... };`）を lang.c に再定義しないでください**（エラー）。
-  フィールド宣言は生成コードが担います。
-- **メソッド本体が無いとリンクエラー**になります（生成されるリンク参照 `&X_method` が
-  未定義シンボルを検出）。実行時に壊れず、ビルドで止まります。
-- **IDL 構造体は自明型（trivial）** です: コンストラクタ/デストラクタは IDL に存在せず、
-  `X_alloc()` は配置 new による**値初期化（全フィールド 0）**、`X_free()` は単純な
-  スロット返却（`free()` のダブルフリー/誤ポインタ検出は維持）。再利用セルも毎回 0 に
-  初期化されます。ポインタフィールドは 0（null）初期化です。
-- **予約名の拒否**: 構造体/フィールド/メソッド/引数名に `constructor` / `free` /
-  `fromPtr` / `liveCount` / `slotCount` / `_ptr` は使用できません（TS クラスと衝突）。
-  フィールドと同名のメソッド、生成名（`X_alloc` / `X_free` / `X_live_count` /
-  `X_slot_count` / `X_get_*` / `X_set_*`）と衝突するメソッドも拒否します。
-- **レガシー `// @jelll-sync` マーカーが lang.c に残っていると即エラー**になり、
-  `lang.sync { ... }` への移行を指示します。
-- `Circle.liveCount()` / `Circle.slotCount()` で使用中/確保済みスロット数を取得できます。
+- Multi-word type names (`long long`) and qualifiers (`const`) are not IDL; use
+  the table spellings. Anything outside the table is an immediate
+  `Unsupported type` error / 多語型名や `const` は IDL では使わずテーブル綴りを
+  使用。テーブル外の型は即 `Unsupported type` エラー。
+- **Method bodies are free-form C++ in `lang.c`**. The generated `extern "C"`
+  prototypes grant C linkage automatically, so `extern "C"` in the body is
+  optional. Macros, `inline`, `__attribute__`, comment styles — all unconstrained
+  (the IDL is parsed independently of user code) / **メソッド本体は lang.c に自由に
+  書けます**。生成プロトタイプが C リンケージを与えるので `extern "C"` はあっても
+  なくても動きます。マクロ・`inline`・属性・コメントも完全自由(IDL はユーザーコードと
+  独立に解析)。
+- **Never re-declare the struct in `lang.c`** (that is an error) — field
+  declarations are generated / **構造体を lang.c に再定義しないでください**(エラー)。
+- **A missing method body is a link error**, caught at build time via generated
+  link references (never a runtime trap) / **メソッド本体が無いとリンクエラー**
+  (ビルドで検出、実行時に壊れません)。
+- **IDL structs are trivial**: no user constructors/destructors. `X_alloc()`
+  value-initializes every field to 0 (recycled cells too); `X_free()` returns the
+  slot (double-free / wrong-pointer calls are detected and ignored) / **IDL 構造体は
+  自明型**: ctor/dtor は書けず、`X_alloc()` は全フィールド 0 初期化(再利用セルも毎回)、
+  `X_free()` はスロット返却(二重 free/誤ポインタは検出され無視)。
+- **Reserved names / 予約名**: `constructor` / `free` / `fromPtr` / `liveCount` /
+  `slotCount` / `_ptr` are rejected for structs, fields, methods and parameters.
+  Method names colliding with fields or with generated symbols (`X_alloc`,
+  `X_free`, `X_live_count`, `X_slot_count`, `X_get_*`, `X_set_*`, and their `_h`
+  forms) are rejected / TS クラスと衝突する予約名・生成名との衝突は拒否。
+- **A legacy `// @jelll-sync` marker anywhere in `lang.c` is an immediate error**
+  with a migration hint / 旧 `// @jelll-sync` マーカーが残っていると移行を指示する
+  エラーになります。
+- `Circle.liveCount()` / `Circle.slotCount()` report live and reserved slots /
+  使用中/確保済みスロット数を取得できます。
 
-### 生成アロケータの設計（レビュー指摘への対応を含む）
+### Generated allocator & handle runtime / 生成アロケータとハンドルランタイム
 
-- **O(1) alloc/free**: 各スラブ（256セル）がフリーリストを持ち、確保は先頭ポップ、
-  解放はプッシュのみ。全スラブ線形走査はありません。
-- **値初期化ライフサイクル**: `X_alloc` は配置 new（`::new (&cell->item) X()`）で
-  全フィールドをゼロ初期化し、`X_free` でスロットを返却します（IDL 構造体は自明型）。
-  テスト `test_sync_lifecycle` で固定。
-- **スレッド安全性**: `--threads` ビルドでは生成コードの管理テーブル操作を
-  `std::mutex` で保護し、ユーザーコードの `std::thread` から直接 `X_alloc()` /
-  `X_free()` を呼んでも安全です（`test_threads_race` で固定）。非スレッドビルドでは
-  ロックは一切生成されません（オーバーヘッドゼロ）。`--threads` はコンパイル時に
-  `-pthread -DJELLL_THREADS=1` を付けるので、ユーザーコードも `#if JELLL_THREADS`
-  で区別できます。
-- **呼び出し順序の自由**: プロトタイプ宣言がユーザー本体より前に出るため、
-  ユーザーコード（グローバル ctor や `std::thread` ラムダ内を含む）から生成 API を
-  直接呼べます。
-- **野良ポインタは「ガードが先に死ぬ」問題への対処**: `X_free` はデリファレンス**前**に
-  算術検証のみで判定します（`__builtin_wasm_memory_size` によるヒープ範囲チェック +
-  アラインメント）。範囲外アドレスは wasm トラップを起こす前に拒否されるため、
-  JS から `X_free(0xdeadbeef)` のようなゴミポインタを渡してもモジュールは死にません。
-  続いてオーナースラブの範囲・magic・**型タグ**（別型ポインタの混用を拒否）・
-  インデックス範囲・ポイスンを検証。getter/setter も同じ範囲チェックを行い、
-  不正ポインタには 0/false を返します（テスト `test_wildptr_guard` で固定）。
-- **二重解放/誤ポインタ検出**: 使用中セルの `next_free` にポイスン値（0x4a454c4c）を
-  立て、`X_free` で検証チェーンを通らない解放は無視します。「解放後に割り当て直された
-  セルへの遅延ポインタ」の再利用検出は不可能（malloc 系と同じ）で、それは自明な
-  エイリアスとして振る舞います。
-- **メモリ方針（ハイウォーター + 空スラブ解放）**: 空になったスラブは**1枚だけ暖気キャッシュ**
-  し、2枚目以降は解放して返却します。使用中スロットはコンパクトなセルに詰めるため、
-  `free()` 済みスロットのダングリング参照も型上アクセス不能になります。
-- **メソッドのリンケージ自動調整**: `lang.sync` の宣言から `extern "C"` プロトタイプと
-  リンク参照を生成するため、メソッド本体は `extern "C"` なしでもマングルされず、
-  JS から `native.Circle_area(...)` で直接呼べます。**メソッド以外の通常関数**を
-  `native.X` で呼ぶには従来通り `extern "C"` で囲んでください。ヘルパー関数・
-  グローバル変数・`namespace` など lang.c は完全な C++ として自由に書けます。
+- **O(1) alloc/free**: each slab (256 cells) owns a free list; allocation pops
+  the head, release pushes back. No linear slab scans / 各スラブ(256セル)が
+  フリーリストを持ち、確保は先頭ポップ・解放はプッシュのみ(O(1))。
+- **Handles, not pointers / ポインタではなくハンドル**: every JS-facing entry
+  takes or returns an opaque handle `(generation << 12 | slot)` resolved through
+  an authoritative slot table that checks liveness, generation and the exact
+  type. Forged, stale, cross-type and double-freed handles are rejected
+  structurally — malformed input can return 0 or do nothing, never crash or
+  corrupt / JS 境界はすべてハンドル(世代+スロット)を介し、生存・世代・型をスロット
+  テーブルで検証。偽造・stale・型混用・二重 free は構造的に拒否(壊れることは
+  ありません)。
+- **Generation is append-only (no ABA) / generation は加算のみ(ABA なし)**:
+  counters never reset or wrap. A slot at the 20-bit ceiling retires forever and
+  its cell continues on a fresh, never-used slot; if no safe slot remains,
+  `alloc` reports failure (0) / カウンタのリセット/巻き戻しは一切なし。上限到達
+  スロットは永久退役してセルには virgin スロットを割り当て、枯渇時は alloc が 0。
+  With `--threads`, method bodies run with their receiver (and pointer
+  arguments) **pinned**: `free` marks the slot draining, refuses new calls and
+  destroys only after the last pin drops; destroy ownership is exclusive (a
+  concurrent second free returns immediately) and re-validates index+generation
+  right before the destructor / `--threads` ではメソッド実行中は対象をピン留めし、
+  free はドレイン後にのみ破棄。解放権は排他で、破棄直前に index+generation を再照合。
+  Non-thread builds generate no locking at all / 非スレッドビルドではロックは生成されません。
+- **Raw C API stays in `lang.c` / 生 C API は lang.c 内部専用**: `X_alloc()`,
+  `X_free()`, `X_get_*()`, `X_set_*()`, `X_method()` keep pointer signatures for
+  C interop and are validated (slab membership + liveness + type) before any
+  dereference, but they are **not exported to JS** / ポインタ版の生 API は C 相互
+  作用用に残しますが JS にはエクスポートしません。
+- **Wild-pointer safety / 野良ポインタ対策**: every raw-pointer entry validates
+  arithmetically (heap range via `__builtin_wasm_memory_size`, alignment) and by
+  slab membership **before** dereferencing, so garbage like `X_free(0xdeadbeef)`
+  is rejected without trapping the module; getters return 0/false on invalid
+  input (`test_wildptr_guard`) / 全ての生ポインタ経路はデリファレンス前に算術検証と
+  スラブ所属検証を行うため、ゴミポインタでも wasm トラップを起こさず拒否されます。
+- **Call-order freedom / 呼び出し順序の自由**: prototypes precede user code, so
+  generated API is callable from global constructors and `std::thread` lambdas
+  alike / プロトタイプが本体より前に出るため、グローバル ctor やスレッドラムダからも
+  生成 API を呼べます。
+- **Memory policy / メモリ方針**: an empty slab is kept warm (one), the rest are
+  released back / 空スラブは 1 枚だけ暖気キャッシュし、2 枚目以降は解放。
+- **Linkage / リンケージ**: `extern "C"` prototypes and link references are
+  generated from the IDL, so bodies need no `extern "C"` and calls from JS are
+  direct. Non-method free functions still need `extern "C"` to be visible as
+  `native.X`. `lang.c` is otherwise full, free C++ / IDL から `extern "C"`
+  プロトタイプとリンク参照を生成。メソッド以外の関数を `native.X` で呼ぶ場合は
+  従来通り `extern "C"` で囲みます。
 
-## 開発モード
+## Dev mode / 開発モード
+
+`jelll dev` builds once, serves `dist/` on 127.0.0.1:8000, polls for changes
+(500ms), rebuilds on save and live-reloads. Regular builds need no special
+headers and run on any static host; only `--threads` builds get COOP/COEP (the
+browser requirement for `SharedArrayBuffer`). Header reads are cut at 2s and
+writes at 5s; incomplete requests get 400 + close (Slowloris resistance). A
+bounded pool (8 handlers) keeps live-reload polling responsive even while a huge
+`native.wasm` streams out. Paths are slash-normalized and containment-checked
+with `weakly_canonical`, so `//etc/passwd` or `..` URLs cannot read host files
+(LFI). Non-loopback `Host` headers are rejected with 421 (DNS rebinding), and a
+per-project `flock` rejects concurrent builds of the same project with a clean
+error. `stop_dev_server()` shuts the listener down safely for embedding.
 
 `jelll dev` は初回ビルド後に 127.0.0.1:8000 で配信、500ms ポーリングで変更検知、
-保存で自動リビルド、ライブリロードします。通常ビルドは特殊ヘッダー不要で、
-どの静的ホスティングでもそのまま動きます。`--threads` ビルドの配信時のみ
-COOP/COEP ヘッダーを付与します（SharedArrayBuffer のブラウザ要件）。
-低速クライアント対策として、ヘッダー受信は2秒・送信は5秒で打ち切り、
-ヘッダー未完の接続は 400 で即クローズします（Slowloris 耐性。テストで固定）。
-ハンドラは**上限8スレッドのプール**で並行処理され、巨大な `native.wasm` の送信中も
-ライブリロードポーリングがブロックされません（キューイングはカーネルの backlog に委譲）。
-パスはスラッシュ正規化 + `weakly_canonical` による dist ディレクトリ内包検証を行い、
-`//etc/passwd` や `..` を含む URL でホストのファイルを読み出せません（LFI 対策）。
-組み込み用途向けに `stop_dev_server()` で受信スレッドを安全に停止できます。
+保存で自動リビルド、ライブリロードします。通常ビルドは特殊ヘッダー不要でどの静的
+ホスティングでも動きます(`--threads` の配信時のみ COOP/COEP を付与)。ヘッダー受信は
+2 秒・送信は 5 秒で打ち切り、ヘッダー未完の接続は 400 で即クローズ(Slowloris 耐性)。
+ハンドラは上限 8 スレッドのプールで並行処理され、巨大な `native.wasm` の送信中でも
+ライブリロードがブロックされません。パスはスラッシュ正規化 + `weakly_canonical` の
+内包検証で LFI を防ぎ、非ループバックの `Host` は 421 で拒否(DNS rebinding 対策)。
+同一プロジェクトへの同時ビルドは flock で検出し、明確なエラーで拒否します。
 
----
+## Intentional deviations from the manual / 仕様書からの意図的な差分・解釈（重要）
 
-## 仕様書からの意図的な差分・解釈（重要）
+The technical manual is treated as **reference**; where it contradicts or omits,
+"make it work correctly" wins.
 
 技術マニュアルは**参考扱い**とし、矛盾・欠落は「ちゃんと動く」を優先して解決しています。
 
-1. **`lang.c` は C++ としてコンパイルする**
-   マニュアルは「C/C++」としながら、サンプルはすべて `extern "C"` 付き C++。
-   中間ファイルも `core.cpp` と明記。よって Emscripten の C++ 入力として扱います。
-   純粋な C（C++として非合法な構文）はコンパイルエラーになります。
-2. **固定16MiBメモリーを撤去**（ユーザー指示による）
-   ヒープは自動成長（初期32MB → 最大2GB）。「16MBを超えたら死ぬ」制約は存在しません。
-   `sharedBuffer`/`sharedMemory` は実ヒープの公開で、別メモリーを持つ旧実装の不具合は修正済み。
-3. **`dist/native.mjs` の追加**
-   Emscripten の実行には生成 JS グルーが必須です。マニュアルの3ファイル構成には
-   この実態が反映されていないため、4ファイル構成を正式とします。
-4. **共有メモリーは通常ビルドでは使わない**
-   SharedArrayBuffer には COOP/COEP が必要で、GitHub Pages 等の静的ホスティングで
-   そのまま動かせないため。スレッドが必要な場合のみ `--threads` で共有メモリー化し、
-   開発サーバーはその時だけ COOP/COEP を付与します。
-5. **エラーメッセージ「No lang.c section found」の適用範囲**
-   V4 ルール（C/Rust/Zig いずれでも可）を優先し、ネイティブブロックが**皆無のときのみ**この
-   エラーを出します（hint に lang.rs/lang.zig でも可と表示）。
-6. **スクリプトブロックは全言語を出現順に連結**（旧実装は言語別にグルーイングし順序が壊れていた）
-   ブロック走査のコメント/文字列マスクは言語別で、JS/TS/C/CSS のシングルクォート文字列
-   （`'}'` を含む）は正しく文字列扱いします（Rust のライフタイム `'a` のみ例外処理）。
-   JS/TS の正規表現リテラルはキーワード文脈（`return /}/;` 等）も正しく判定し、
-   内部の波括弧がブロック抽出を壊しません。
-7. **Rust は rustc 直コンパイル（外部クレート非対応）**
-   `--crate-type=staticlib` + オブジェクト併用で `#[no_mangle]` エクスポートと std の遅延リンクを両立。
-   std は単スレッド前提で利用可能（スレッド生成を伴う std 機能は対象外）。
-   `extern "C"` 以外の Rust 関数はマングル名でエクスポートされますが API ではありません。
-   ※ `.o` と `.a` の二重リンクについて: リンカー（wasm-ld）はライブラリを**遅延抽出**し、
-   `core_rs.o` が直接定義済みのシンボルを持つメンバーは `.a` から展開されないため
-   重複定義にはなりません（`.a` 内にクレートオブジェクトのコピーが存在するのは事実ですが、
-   展開されない以上衝突しません）。実測でも本構成のリンクは再現可能（同一サイズ）で、
-   `core::fmt::Write::write_str` 等の std を使うテストが重複なしで通っています。
-   代替案の「`.a` のみ + `--whole-archive`」は重複を生まないものの、実測で
-   **バイナリ +39%・不要エクスポート +759 個**（無名シンボルの JS 警告付き）でした。
-   「`.o` のみ」は std を含められないため不可能です。なお `.o` + `.a` に
-   `--whole-archive` を付けると確かに `duplicate symbol` で落ちますが、それは本構成の
-   フラグではありません。リンカ仕様はピン留めしたツールチェーン＋テストスイートで
-   固定しており、将来の変更はリンクエラーという**ビルド時・大声の**失敗として現れる
-   （実行時に壊れない）ため、地雷ではなく管理された依存です。
-8. **Zig は `wasm32-freestanding`**（std は freestanding で動くサブセットのみ）
-9. **レガシー拡張子 `.jsbc/.tsbc/.tsxbc` は `.jelll` のエイリアス**（モード自動判定も同一）
-10. **セキュリティ修正**: コマンド実行にシェルを使用しない（旧実装のコマンドインジェクション／
-    パス空白での破壊を修正）。出力はアトミック書き込み。
-11. **`lang.sync`（IDL）導入・構造体スクレイピング廃止（V5）**
-    `// @jelll-sync` を付けた C++ 構造体宣言のスクレイピングは精度限界（走査ヒューリスティックの
-    破破綻）と観測されたため廃止し、宣言を IDL ブロックに分離しました。C++ 側には
-    メソッド本体のみを記述します。IDL プロパティ（コメント耐性・順序非依存・
-    `#define` 耐性・struct リテラル/式/修飾子の無効化）はすべて保証されます。
-    旧マーカーには移行エラー（error041）を返します。IDL 構造体は自明型として
-    値初期化されます（ユーザー ctor/dtor の記述はできません）。
-12. **`export` を含むスクリプトブロック・`import` はトップレベルで利用可能**
-    （ユーザーコードはモジュールトップレベルで、初期化完了**後**に実行されます。
-    旧実装は WASM 初期化前に実行され `native.*` が未定義になるレースがありました）
+1. **`lang.c` compiles as C++ / `lang.c` は C++ としてコンパイル**
+   The manual says "C/C++" but every sample is C++ with `extern "C"`, and the
+   intermediate is `core.cpp`. Pure C that is illegal C++ is a compile error /
+   サンプルは全て C++ で中間も `core.cpp`。C++ として非合法な純 C はコンパイルエラー。
+2. **No fixed 16MiB memory / 固定16MiBメモリーなし** (explicit requirement /
+   ユーザー指示): the heap auto-grows (32MB initial → 2GB max). `sharedBuffer` /
+   `sharedMemory` expose the real heap / ヒープは自動成長し、`sharedBuffer`/
+   `sharedMemory` は実ヒープを公開します。
+3. **`dist/native.mjs` is part of the output / 出力に含む** — Emscripten needs its
+   JS glue; the manual's three-file layout omits it, so the four-file layout is
+   canonical / Emscripten の JS グルーが必須のため 4 ファイル構成を正式とします。
+4. **Shared memory only with `--threads` / 共有メモリーは `--threads` のみ** —
+   `SharedArrayBuffer` requires COOP/COEP, which plain static hosting lacks;
+   the dev server adds the headers only in that mode / COOP/COEP が必要なため。
+5. **"No lang.c section found" scope / 適用範囲** — raised only when **no**
+   native block exists (lang.rs / lang.zig also qualify; see the hint) /
+   ネイティブブロックが皆無のときのみ(lang.rs/lang.zig でも可)。
+6. **Script blocks concatenate in source order / スクリプトは出現順に連結** (the
+   old per-language regrouping broke ordering). Comment/string masking is
+   per-language, handles `'}'` in single-quoted strings, Rust lifetimes `'a`,
+   and JS regex literals such as `return /}/;` / コメント/文字列マスクは言語別で、
+   シングルクォート内の `}`・Rust ライフタイム・JS 正規表現リテラルも正しく判定。
+7. **Rust: direct rustc, no external crates / Rust は rustc 直コンパイル・外部
+   クレート非対応** — `--crate-type=staticlib` plus the object file gives
+   `#[no_mangle]` exports and lazy std linking; std is single-thread scoped.
+   Non-`extern "C"` functions export mangled (not API). The `.o` + `.a` link is
+   sound: wasm-ld extracts library members lazily and symbols already defined
+   in `core_rs.o` are not pulled from the archive (measured reproducible;
+   `--whole-archive` on `.a`-only bloated the binary +39% and leaked 759 extra
+   exports) / `.o`+`.a` の二重リンクは遅延抽出により重複定義にならず実測再現可能。
+   Toolchain pins + the test suite keep linker changes loud (build-time), never
+   silent runtime breakage / ピン留めツールチェーン+テストでリンカ変更はビルド時に顕在化。
+8. **Zig targets `wasm32-freestanding`** (freestanding std subset only) /
+   Zig は `wasm32-freestanding`(freestanding で動く std サブセットのみ)。
+9. **Legacy extensions `.jsbc/.tsbc/.tsxbc` alias `.jelll`** (identical mode
+   detection) / レガシー拡張子は `.jelll` のエイリアス。
+10. **No shell in the pipeline / コマンド実行にシェル不使用** (the old injection /
+    space-in-path breakage is gone); outputs are written atomically / 出力は
+    アトミック書き込み。
+11. **`lang.sync` IDL replaces struct scraping / IDL 導入・スクレイピング廃止** —
+    scraping C++ declarations proved unfixable; declarations live in the IDL,
+    bodies in `lang.c`. All the robustness properties (comment immunity,
+    `#define` immunity, order independence) are guaranteed. A legacy marker
+    errors with a migration hint. IDL structs are value-initialized trivial
+    types / 宣言は IDL、本体は lang.c。旧マーカーは移行エラー。IDL 構造体は値初期化
+    される自明型。
+12. **`export`/`import` at the top level of scripts works**, and user code runs
+    **after** WASM initialization completes (no more `native.*` undefined race) /
+    スクリプトのトップレベル `export`/`import` が使え、ユーザーコードは WASM 初期化
+    完了後に実行されます。
 
-## 「エラーが出ない」の範囲
+## Scope of "no errors" / 「エラーが出ない」の範囲
 
-- 本ツール自体は厳格コンパイル（`-Werror`）・境界チェック・シェル非使用で、正常系/異常系を
-  テストで固定しています（下記）。
-- 一方、**任意のユーザー入力・任意のコンパイラバージョン・任意のブラウザ環境で
-  「絶対に失敗しない」ことを保証することはできません**。入力が仕様に反する場合は
-  マニュアルのエラーリファレンスに準拠した診断で停止し、`.bc_build/*.log` に原因を残します。
-- 同一プロジェクトへの**複数プロセスの同時ビルドは未対応**（`.bc_build` を共有するため）。
-  dev サーバー単体の利用・逐次ビルドが対象です。
+- The tool itself is strictly compiled (`-Werror`, zero warnings),
+  bounds-checks everything it parses and executes no shell. Normal and failure
+  paths are pinned by the test suite / 本ツール自体は厳格コンパイル(-Werror・警告
+  ゼロ)・境界チェック・シェル非使用で、正常系/異常系をテストで固定しています。
+- **We cannot promise "never fails" for arbitrary user input, arbitrary compiler
+  versions or arbitrary browsers.** Input violating the spec stops with
+  diagnostics in the manual's error-reference style and leaves the cause in
+  `.bc_build/*.log` / 任意の入力・コンパイラ・ブラウザで「絶対に失敗しない」保証は
+  できません。仕様に反する入力はリファレンス準拠の診断で停止し、ログに原因を残します。
+- Concurrent builds of the same project are rejected with a clean error
+  (per-project `flock`); serial builds and a single dev server are the supported
+  modes / 同一プロジェクトへの同時ビルドは flock で明確に拒否。逐次ビルドと
+  dev サーバ単体が対象です。
 
-## テスト
+## Tests / テスト
 
 ```sh
-tests/install_toolchains.sh   # 初回のみ: Emscripten/Rust/Zig/esbuild/Playwright を ~/.cache/jelll-tools へ
+tests/install_toolchains.sh   # first time / 初回のみ: toolchains + Playwright → ~/.cache/jelll-tools
 cd tests && python3 -m pytest -q
 ```
 
-- ブラウザ実機（Playwright/Chromium）で C/Rust/Zig 連携・std 使用・@jelll-sync
-  （プール枯渇・use-after-free 検出・bigint）・出現順混合・コメント/文字列内ブロック無視を検証
-- 生成 API の堅牢性: 野良ポインタ/型混用/二重解放の拒否（`test_wildptr_guard`）、
-  ctor/dtor ライフサイクル（`test_sync_lifecycle`）、4スレッド競合 2万 alloc/free
-  （`test_threads_race`、`--threads` 実機）
-- エラーパス全11種（エラーリファレンス準拠メッセージの一致確認）
-- 開発サーバーの COOP/COEP・自動リビルド・ライブリロード検知・
-  停滞クライアント並行耐性（1.5秒以内応答）と切断リクエストへの 400
-- `jelll --setup` は疑似 TTY で UI 操作（矢印・スペース・Enter）を確認（dry-run）
+- Real-browser (Playwright/Chromium) E2E for C/Rust/Zig interop, std usage,
+  lifecycle, bigint, mixed block ordering, comment/string immunity /
+  ブラウザ実機で C/Rust/Zig 連携・std 使用・ライフサイクル・bigint・出現順混合・
+  コメント/文字列耐性を検証
+- Runtime robustness: wild/cross-type/double-free rejection (`test_wildptr_guard`),
+  generation-churn ABA schedule (1,048,574 cycles), exclusive double-free
+  (`test_r02_double_free_exclusive`), 4-thread 20k alloc/free race
+  (`test_threads_race`, real `--threads`) / 野良ポインタ・世代枯渇 ABA・二重 free
+  排他・4 スレッド競合を固定
+- All error paths (message-level assertions per the manual's error reference) /
+  エラーパス全種をメッセージ一致で固定
+- Dev server: COOP/COEP, auto-rebuild, live reload, stalled-client concurrency
+  (<1.5s), truncated requests → 400, split requests reassembled, `Host`
+  rejection → 421 / 開発サーバの COOP/COEP・自動リビルド・停滞クライアント耐性・
+  分割リクエスト・Host 拒否を固定
+- `jelll --setup` driven through a pseudo-TTY (arrows, space, Enter) in dry-run /
+  `jelll --setup` は疑似 TTY で UI 操作を確認(dry-run)
