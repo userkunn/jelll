@@ -1,0 +1,14 @@
+lang.c { extern "C" { int regex_dummy() { return 1; } } }
+
+lang.js {
+function hasBrace(s) { return /}/.test(s); }
+function hasBrace2(s) { return /foo}bar/.test(s); }
+function hasClass(s) { return /[{}]/.test(s); }
+const r1 = hasBrace('}');
+const r2 = hasBrace('x');
+const r3 = hasBrace2('foo}bar');
+const r4 = hasClass('{');
+const r5 = (10 / 2 === 5);   // division must still parse as division
+window.__jelll_results = { r1: r1, r2: r2, r3: r3, r4: r4, r5: r5 };
+window.__jelll_done = true;
+}

@@ -1,0 +1,52 @@
+lang.sync {
+  struct Box {
+    float v;
+  }
+
+  struct Stamp {
+    float v;
+  }
+}
+
+lang.ts {
+const b = new Box();
+b.v = 1;
+const s = new Stamp();
+s.v = 2;
+
+// Wild pointers must be REJECTED without trapping the module:
+// (a) unmapped address outside the wasm heap
+native.Box_free_h(0xdeadbeef);
+// (b) mapped garbage that is not a cell
+native.Box_free_h(12345);
+// (c) cross-type confusion: a live Stamp pointer passed to Box_free
+native.Box_free_h(s._ptr);
+const stampAlive = (s.v === 2) && (Stamp.liveCount() === 1);
+const boxAlive = (b.v === 1) && (Box.liveCount() === 1);
+
+// Valid free, then double free: second call must be rejected, not crash.
+native.Box_free_h(b._ptr);
+native.Box_free_h(b._ptr);
+const clean = (Box.liveCount() === 0);
+
+// The pool still works normally afterwards.
+const n = new Box();
+n.v = 7;
+const recovered = n.v === 7;
+n.free();
+
+// fromPtr must reject non-integer / non-positive values (C-02).
+let fromPtrRejected = false;
+try { Box.fromPtr(1.5); } catch (e) { fromPtrRejected = true; }
+try { Box.fromPtr(0); fromPtrRejected = false; } catch (e) { fromPtrRejected = true; }
+// A stale handle must not corrupt a recycled cell (generation check).
+const stale = Box.fromPtr(0x10000);
+const n2 = new Box();
+n2.v = 3;
+stale.free();      // stale handle: rejected silently inside native
+const staleSafe = n2.v === 3;
+n2.free();
+
+(window as any).__jelll_results = { stampAlive, boxAlive, clean, recovered, fromPtrRejected, staleSafe };
+(window as any).__jelll_done = true;
+}

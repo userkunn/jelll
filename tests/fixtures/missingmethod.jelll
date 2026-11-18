@@ -1,0 +1,16 @@
+lang.sync {
+  struct Ghost {
+    float v;
+    poke() -> float;
+  }
+}
+
+lang.c {
+// Ghost_poke is declared in lang.sync but has no body anywhere: the generated
+// link reference turns this into a link-time error instead of a runtime trap.
+}
+
+lang.ts {
+(window as any).__jelll_results = {};
+(window as any).__jelll_done = true;
+}

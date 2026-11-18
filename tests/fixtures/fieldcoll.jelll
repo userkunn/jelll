@@ -1,0 +1,12 @@
+lang.sync {
+  // A method named like a field must be rejected.
+  struct C {
+    float f;
+    f() -> float;
+  }
+}
+
+lang.ts {
+(window as any).__jelll_results = {};
+(window as any).__jelll_done = true;
+}

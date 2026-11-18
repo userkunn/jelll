@@ -1,0 +1,1 @@
+lang.c { extern "C" { int f() { return 1; } } }

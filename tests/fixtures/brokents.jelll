@@ -1,0 +1,4 @@
+lang.ts {
+const x: = ((( ;
+}
+lang.c { extern "C" { int g() { return 1; } } }

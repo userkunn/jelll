@@ -1,0 +1,3 @@
+call "a.jelll"
+lang.c { extern "C" { int b_fn() { return 2; } } }
+lang.js { window.__b = 2; }

@@ -1,0 +1,12 @@
+lang.c {
+// Legacy marker from the scraping era: must be rejected with a migration hint.
+// @jelll-sync
+struct Legacy {
+    int v;
+};
+}
+
+lang.ts {
+(window as any).__jelll_results = {};
+(window as any).__jelll_done = true;
+}

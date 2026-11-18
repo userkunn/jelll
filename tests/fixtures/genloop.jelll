@@ -1,0 +1,31 @@
+lang.sync {
+  struct G {
+    int x;
+  }
+}
+
+lang.ts {
+  // Regression R-05 (third audit) - the exact ABA schedule:
+  // 512 objects (2 slabs); keep a stale generation-1 handle; free both slabs;
+  // churn one cell across the 20-bit generation ceiling (1,048,574 cycles).
+  // The stale handle must NEVER match the post-retirement fresh handle.
+  const xs: G[] = [];
+  for (let i = 0; i < 512; i++) xs.push(new G());
+  const stale = xs[511]._ptr;
+  for (let i = 0; i < 256; i++) xs[i].free();
+  for (let i = 256; i < 512; i++) xs[i].free();
+  for (let i = 0; i < 1048574; i++) {
+    const t = new G();
+    t.free();
+  }
+  const fresh = new G();
+  fresh.x = 123;
+  const staleEqFresh = (stale === fresh._ptr);
+  const freshIdx = fresh._ptr & 0xfff;   // > 511 proves a VIRGIN slot was minted
+  const staleRead = G.fromPtr(stale).x;   // must NOT see the fresh object
+  const freshRead = fresh.x;              // 123
+  fresh.free();
+  const liveEnd = G.liveCount();
+  (window as any).__jelll_results = { staleEqFresh, freshIdx, staleRead, freshRead, liveEnd };
+  (window as any).__jelll_done = true;
+}

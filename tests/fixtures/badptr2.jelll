@@ -1,0 +1,7 @@
+lang.sync {
+  // R-01: void* is rejected too.
+  struct A {
+    use(void* q) -> void;
+  }
+}
+lang.js { const x = 1; }

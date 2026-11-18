@@ -1,5 +1,0 @@
-lang.c {
-extern "C" {
-    int helper_square(int x) { return x * x; }
-}
-}

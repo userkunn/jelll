@@ -1,0 +1,9 @@
+lang.c {
+extern "C" { int add(int a, int b) { return a + b; } }
+}
+
+lang.js {
+document.body.textContent = 'add(2,3) = ' + native.add(2, 3);
+window.__jelll_results = { v: native.add(2, 3), body: document.body.textContent };
+window.__jelll_done = true;
+}

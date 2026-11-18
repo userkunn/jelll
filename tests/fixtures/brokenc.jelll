@@ -1,0 +1,4 @@
+lang.c {
+extern "C" { int broken(void) { return @@@; } }
+}
+lang.js { window.__x = 1; }

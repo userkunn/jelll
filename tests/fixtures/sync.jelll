@@ -1,0 +1,69 @@
+lang.sync {
+  struct Circle {
+    float x;
+    float y;
+    float radius;
+    area() -> float;
+    scale(float s) -> float;
+  }
+
+  struct Stamp {
+    int64 value;
+  }
+}
+
+lang.c {
+#include <math.h>
+#include <stdlib.h>
+
+extern "C" {
+    float Circle_area(Circle* self) {
+        return 3.14159f * self->radius * self->radius;
+    }
+    float Circle_scale(Circle* self, float s) {
+        self->radius *= s;
+        return self->radius;
+    }
+    unsigned char* make_buf(int n) { return (unsigned char*)malloc((size_t)n); }
+    int read_byte(unsigned char* p, int i) { return p[i]; }
+    void free_buf(void* p) { free(p); }
+}
+}
+
+lang.ts {
+const c = new Circle();
+c.x = 100; c.y = 200; c.radius = 50;
+const area = c.area();
+const r2 = c.scale(2.0);
+const x = c.x;
+const st = new Stamp();
+st.value = 42n;
+const stampValue = st.value;
+st.free();
+c.free();
+let freed = false;
+try { c.x = 1; } catch (e) { freed = true; }
+// no pool cap: allocate well beyond the old 256 limit
+const many: Circle[] = [];
+for (let i = 0; i < 300; i++) many.push(new Circle());
+many[299].radius = 7;
+const r299 = many[299].radius;
+const live300 = Circle.liveCount();
+for (const m of many) m.free();
+const liveAfter = Circle.liveCount();
+// growable memory: 64MB allocation forces growth past the 32MB initial heap
+const buf: number = native.make_buf(64 * 1024 * 1024);
+const view = new Uint8Array(sharedBuffer);
+view[buf + 123] = 42;
+const got = native.read_byte(buf, 123);
+const memOk = (globalThis.sharedMemory instanceof WebAssembly.Memory) &&
+  (globalThis.sharedBuffer === (globalThis.sharedMemory as any).buffer) && got === 42 && buf > 0;
+const bufSize = (sharedBuffer as any).byteLength;
+native.free_buf(buf);
+(window as any).__jelll_results = {
+  area, r2, x, freed, stampValue: String(stampValue),
+  r299, live300, liveAfter, memOk, bufSize,
+  areaFn: typeof native.Circle_area_h === 'function'
+};
+(window as any).__jelll_done = true;
+}

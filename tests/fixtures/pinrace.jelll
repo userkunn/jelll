@@ -1,0 +1,36 @@
+lang.sync {
+  struct P {
+    float v;
+    slow() -> float;
+  }
+}
+
+lang.c {
+#include <chrono>
+#include <thread>
+
+// Regression R-02: a "worker" frees our handle while the body is still
+// running. With pinning, free_h() drains until the thunk releases the pin,
+// so every access below stays on a live payload.
+float P_slow(P* self) {
+    unsigned h = __jelll_handle_of_P(self);
+    std::thread([h]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        P_free_h(h);
+    }).detach();
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    float v = self->v;      // must not be a freed cell
+    self->v = v + 1.0f;     // ... and still writable
+    return self->v;
+}
+}
+
+lang.ts {
+  const p = new P();
+  p.v = 5;
+  const r = p.slow();
+  await new Promise((res) => setTimeout(res, 400));
+  const liveAfter = P.liveCount();   // the drained free must have landed
+  (window as any).__jelll_results = { r, liveAfter };
+  (window as any).__jelll_done = true;
+}

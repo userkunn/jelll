@@ -1,0 +1,45 @@
+lang.sync {
+  struct D {
+    int x;
+    probe(uint target) -> int;
+  }
+}
+
+lang.c {
+// Regression R-02 (third audit) - whitebox replay of the exact concurrent
+// double-free schedule: two free_begin calls on the SAME handle. Only the
+// first may win a destroy ticket; the second must get nothing.
+int D_probe(D* self, unsigned int target) {
+    (void)self;
+    void* p1 = 0;
+    void* p2 = 0;
+    int o1 = 0, o2 = 0;
+    {
+        std::lock_guard<std::mutex> lk(__jelll_mtx);
+        __jelll_free_begin(target, 1, &p1, &o1);   // thread 1 (type id of D = 1)
+    }
+    {
+        std::lock_guard<std::mutex> lk(__jelll_mtx);
+        __jelll_free_begin(target, 1, &p2, &o2);   // thread 2: same handle
+    }
+    int exclusive = (p1 != 0) && (p2 == 0);
+    if (p1) {
+        std::lock_guard<std::mutex> lk(__jelll_mtx);
+        __jelll_free_impl_D((D*)p1);               // destroy exactly once
+    }
+    return exclusive;
+}
+}
+
+lang.ts {
+  const a = new D();
+  const b = new D();
+  b.x = 7;
+  const r = a.probe(b._ptr);        // b destroyed exactly once inside the probe
+  const liveAfter = D.liveCount();  // only a remains
+  const survivor = a.x;             // the recycled cell must not be corrupted
+  a.free();
+  const liveFinal = D.liveCount();
+  (window as any).__jelll_results = { r, liveAfter, survivor, liveFinal };
+  (window as any).__jelll_done = true;
+}

@@ -1,0 +1,42 @@
+lang.sync {
+  struct Node {
+    float v;
+  }
+}
+
+lang.c {
+#include <thread>
+#include <vector>
+
+extern "C" {
+  int run_race(int n_threads, int iters) {
+    std::vector<std::thread> pool;
+    for (int t = 0; t < n_threads; ++t) {
+      pool.emplace_back([iters]() {
+        for (int i = 0; i < iters; ++i) {
+          Node* n = Node_alloc();
+          Node_set_v(n, 3.5f);
+          Node_free(n);
+        }
+      });
+    }
+    for (auto& th : pool) th.join();
+    return Node_live_count();
+  }
+
+  float touch_one(void) {
+    Node* n = Node_alloc();
+    Node_set_v(n, 3.5f);
+    float r = Node_get_v(n);
+    Node_free(n);
+    return r;
+  }
+}
+}
+
+lang.ts {
+const r1 = native.touch_one();
+const live = native.run_race(4, 5000);
+(window as any).__jelll_results = { r1, live };
+(window as any).__jelll_done = true;
+}

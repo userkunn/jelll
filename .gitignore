@@ -1,22 +1,6 @@
-# Build artifacts
-.bc_build/
-dist/
-*.obj
+jelll
 *.o
-
-# Dependencies
-emsdk/
-node_modules/
-
-# Test files
-test_*.jebc
-test_*.tsxbc
-test_*.tsbc
-
-# Personal / app-specific
-vpn.tsbc
-wrangler.json
-
-# OS
-Thumbs.db
-.DS_Store
+tests/fixtures/dist/
+tests/fixtures/.bc_build/
+tests/e2e/node_modules/
+tests/e2e/package*.json

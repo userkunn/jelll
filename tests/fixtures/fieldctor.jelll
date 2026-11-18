@@ -1,0 +1,11 @@
+lang.sync {
+  // A field literally named `constructor` must be rejected.
+  struct C {
+    int constructor;
+  }
+}
+
+lang.ts {
+(window as any).__jelll_results = {};
+(window as any).__jelll_done = true;
+}

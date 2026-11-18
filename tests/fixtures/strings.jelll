@@ -1,0 +1,15 @@
+lang.c { extern "C" { int strings_dummy() { return 1; } } }
+
+lang.js {
+const s1 = 'a } b';
+const s2 = 'hello } world }';
+const s3 = "double } ok";
+const s4 = 'esc \' }';
+const c1 = 'x';   // char-style literal still works
+window.__jelll_results = {
+  r1: s1, r2: s2, r3: s3, r4: s4, c1: c1,
+  ok: (s1 === 'a } b') && (s2 === 'hello } world }') &&
+      (s3 === 'double } ok') && (s4 === "esc ' }") && (c1 === 'x')
+};
+window.__jelll_done = true;
+}

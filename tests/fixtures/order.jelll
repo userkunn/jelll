@@ -1,0 +1,27 @@
+lang.c {
+extern "C" { int one() { return 1; } }
+}
+
+lang.html {
+<div id="app"></div>
+}
+
+lang.css {
+#app { color: #0f0; }
+}
+
+lang.js {
+window.__order = ["js1"];
+const tpl = `brace } and ${ 1 + 1 } and {`;
+window.__order.push("js1b:" + tpl.length);
+}
+
+lang.ts {
+window.__order.push("ts1");
+}
+
+lang.js {
+window.__order.push("js2");
+window.__jelll_results = { order: window.__order };
+window.__jelll_done = true;
+}

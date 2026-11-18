@@ -1,0 +1,44 @@
+lang.sync {
+  struct My_Counter {
+    int x;
+    int y;
+    float v;
+    My_Counter* next;
+    inc(int n) -> int;
+    reset() -> void;
+  }
+}
+
+lang.c {
+// Methods written WITHOUT `extern "C"`: the generated prototypes grant C
+// linkage automatically. Comments here carry brace noise { } and fake
+// signatures like float ghost(My_Counter* s) { return 1; } that must stay inert.
+int My_Counter_inc(My_Counter* self, int n) {
+    self->x += n;
+    return self->x;
+}
+
+void My_Counter_reset(My_Counter* self) {
+    self->x = 0;
+    self->y = 0;
+}
+}
+
+lang.ts {
+const c = new My_Counter();
+c.x = 40;
+const r1 = c.inc(2);
+const r2 = c.x;
+c.y = 3;
+c.reset();
+const r3 = c.x;
+const r4 = c.y;
+// Pointer field round-trip
+const d = new My_Counter();
+d.v = 0.5;
+c.next = d._ptr;
+const r5 = (c.next === d._ptr) && Math.abs(d.v - 0.5) < 1e-6;
+c.free(); d.free();
+(window as any).__jelll_results = { r1, r2, r3, r4, r5 };
+(window as any).__jelll_done = true;
+}

@@ -1,0 +1,24 @@
+lang.sync {
+  struct Foo {
+    int v;
+    get() -> Foo*;
+  }
+}
+
+lang.c {
+  // Regression R-10 minimal PoC: a method returning Foo* must compile to a
+  // HANDLE (via __jelll_handle_of_Foo), not a raw pointer cast to unsigned.
+  Foo* Foo_get(Foo* self) { return self; }
+}
+
+lang.ts {
+  const f = new Foo();
+  f.v = 7;
+  const g: number = f.get();        // typed handle
+  const same = (g === f._ptr);      // self-return maps to our own handle
+  const obj = Foo.fromPtr(g);
+  const gv = obj.v;                 // reading through the returned handle
+  f.free();
+  (window as any).__jelll_results = { same, gv };
+  (window as any).__jelll_done = true;
+}

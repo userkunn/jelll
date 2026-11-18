@@ -1,0 +1,7 @@
+lang.sync {
+  // R-01: non-struct pointers are rejected.
+  struct A {
+    int* p;
+  }
+}
+lang.js { const x = 1; }

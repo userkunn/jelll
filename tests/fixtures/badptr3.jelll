@@ -1,0 +1,10 @@
+lang.sync {
+  struct A {
+    int v;
+  }
+  struct B {
+    // R-01: multi-pointers are rejected even for struct bases.
+    A** pp;
+  }
+}
+lang.js { const x = 1; }

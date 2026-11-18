@@ -1,0 +1,14 @@
+lang.c {
+extern "C" {
+  int tadd(int a, int b) { return a + b; }
+}
+}
+
+lang.js {
+window.__jelll_results = {
+  v: native.tadd(20, 22),
+  sab: (globalThis.sharedBuffer instanceof SharedArrayBuffer),
+  mem: (globalThis.sharedMemory instanceof WebAssembly.Memory)
+};
+window.__jelll_done = true;
+}

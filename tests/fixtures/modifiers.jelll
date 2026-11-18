@@ -1,0 +1,46 @@
+lang.sync {
+  struct Mod {
+    float v;
+    twice() -> float;
+    quad() -> float;
+    w2() -> float;
+  }
+}
+
+lang.c {
+// lang.c のマクロ・inline・属性・コメントは lang.sync の処理に一切影響しない。
+// lang.sync が先行する IDL なので、マスクのヒューリスティックに依存しない。
+#define MUL 2.0f
+
+inline float Mod_twice(Mod* self) {
+    return self->v * MUL;      // macro-expanded comment trap { } /* } */
+}
+
+static float helper = 0;
+
+__attribute__((unused)) static float twice_val(Mod* m) {
+    return m->v * MUL;
+}
+
+float Mod_quad(Mod* self) {
+    float t = twice_val(self);  // "extern \"C\"" string with braces { and } but it is fine
+    return t + t;
+}
+
+/* block comment with braces { } and the word struct and function-looking
+   things like float helper(Mod* self) { return 1; } stay inert */
+float Mod_w2(Mod* self) {
+    return self->v * MUL;
+}
+}
+
+lang.ts {
+const m = new Mod();
+m.v = 7;
+const r1 = m.twice();
+const r2 = m.quad();
+const r3 = m.w2();
+const r4 = m.v;
+(window as any).__jelll_results = { r1, r2, r3, r4 };
+(window as any).__jelll_done = true;
+}

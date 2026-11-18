@@ -1,0 +1,19 @@
+lang.sync {
+  // Pointer field: IDL `Holder*`, TS getter/setter expose the unsigned int ptr.
+  struct Holder {
+    int v;
+    Holder* link;
+  }
+}
+
+lang.ts {
+const a = new Holder();
+const b = new Holder();
+b.v = 2;
+a.link = b._ptr;
+const r1 = (a.link === b._ptr) ? 1 : 0;
+const r2 = b.v;
+a.free(); b.free();
+(window as any).__jelll_results = { r1, r2 };
+(window as any).__jelll_done = true;
+}

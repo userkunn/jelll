@@ -1,0 +1,23 @@
+lang.sync {
+  struct Widget {
+    float v;
+  }
+}
+
+lang.ts {
+const w1 = new Widget();
+const w2 = new Widget();
+const w3 = new Widget();
+const r1 = w1.v;                 // 0: value-initialized on alloc
+w1.v = 9.5;
+const r2 = w1.v;
+const r3 = Widget.liveCount();
+w1.free(); w2.free(); w3.free();
+const r4 = Widget.liveCount();
+const w4 = new Widget();
+const r5 = w4.v;                 // 0: recycled cell is value-initialized again
+w4.free();
+const r6 = Widget.liveCount();
+(window as any).__jelll_results = { r1, r2, r3, r4, r5, r6 };
+(window as any).__jelll_done = true;
+}

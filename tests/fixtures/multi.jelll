@@ -1,0 +1,21 @@
+lang.c {
+extern "C" { int calc_c() { return 10; } }
+}
+
+lang.rs {
+#[no_mangle] pub extern "C" fn calc_rs() -> i32 { 20 }
+}
+
+lang.zig {
+export fn calc_zig() i32 { return 30; }
+}
+
+lang.js {
+window.__jelll_results = {
+  c: native.calc_c(),
+  rs: native.calc_rs(),
+  zig: native.calc_zig(),
+  sum: native.calc_c() + native.calc_rs() + native.calc_zig()
+};
+window.__jelll_done = true;
+}

@@ -1,0 +1,18 @@
+/*
+lang.c { this_is_a_fake_block(); }
+call "components/math.jelll"
+*/
+// lang.rs { fake_rust() }
+// call "missing-should-be-ignored.jelll"
+
+call "components/math.jelll"
+
+lang.js {
+const s = "lang.zig { not_a_block }";
+window.__jelll_results = { ok: native.triple(4) === 12, sLen: s.length };
+window.__jelll_done = true;
+}
+
+lang.c {
+extern "C" { int add(int a, int b) { return a + b; } }
+}

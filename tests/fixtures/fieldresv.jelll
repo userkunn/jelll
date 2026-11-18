@@ -1,0 +1,11 @@
+lang.sync {
+  // A field named `_ptr` collides with the wrapper's handle property: reserved.
+  struct C {
+    int _ptr;
+  }
+}
+
+lang.ts {
+(window as any).__jelll_results = {};
+(window as any).__jelll_done = true;
+}

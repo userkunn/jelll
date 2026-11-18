@@ -1,0 +1,10 @@
+lang.sync {
+  struct Bad {
+    string s;
+  }
+}
+
+lang.ts {
+(window as any).__jelll_results = {};
+(window as any).__jelll_done = true;
+}
